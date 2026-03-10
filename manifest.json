@@ -1,0 +1,47 @@
+{
+  "manifest_version": "0.3",
+  "name": "mcp-server-checkpoint-avanan",
+  "display_name": "Checkpoint Harmony Email & Collaboration (Avanan) MCP Server",
+  "version": "0.0.0",
+  "description": "MCP server for Checkpoint Harmony Email & Collaboration (Avanan) - email security, anti-phishing, anti-malware, and threat detection",
+  "long_description": "Provides AI assistants with structured access to Checkpoint Harmony Email & Collaboration (formerly Avanan). Manage email quarantine, investigate threats and IOCs, view security events and alerts, manage policies (DLP, anti-phishing, anti-malware), manage users, generate reports, investigate incidents, configure Smart Banners, and monitor SaaS application protection through the Model Context Protocol.",
+  "author": { "name": "Wyre Technology", "url": "https://github.com/wyre-technology" },
+  "repository": { "type": "git", "url": "https://github.com/wyre-technology/mcp-server-checkpoint-avanan" },
+  "homepage": "https://github.com/wyre-technology/mcp-server-checkpoint-avanan",
+  "license": "Apache-2.0",
+  "keywords": ["checkpoint", "avanan", "harmony", "email-security", "anti-phishing", "anti-malware", "mcp", "msp"],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "CHECKPOINT_CLIENT_ID": "${user_config.checkpoint_client_id}",
+        "CHECKPOINT_CLIENT_SECRET": "${user_config.checkpoint_client_secret}",
+        "MCP_TRANSPORT": "stdio"
+      }
+    }
+  },
+  "tools_generated": true,
+  "user_config": {
+    "checkpoint_client_id": {
+      "type": "string",
+      "title": "Checkpoint Client ID",
+      "description": "Your Checkpoint Harmony API client ID",
+      "required": true
+    },
+    "checkpoint_client_secret": {
+      "type": "string",
+      "title": "Checkpoint Client Secret",
+      "description": "Your Checkpoint Harmony API client secret (access key)",
+      "sensitive": true,
+      "required": true
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": { "node": ">=20.0.0" },
+    "claude_desktop": ">=0.10.0"
+  }
+}
