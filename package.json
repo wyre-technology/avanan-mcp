@@ -1,5 +1,5 @@
 {
-  "name": "@wyre-technology/mcp-server-checkpoint-avanan",
+  "name": "@wyre-technology/avanan-mcp",
   "version": "1.0.0",
   "description": "MCP server for Checkpoint Harmony Email & Collaboration (Avanan) - email security, anti-phishing, anti-malware, and threat detection API integration",
   "type": "module",
@@ -22,7 +22,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/wyre-technology/mcp-server-checkpoint-avanan.git"
+    "url": "git+https://github.com/wyre-technology/avanan-mcp.git"
   },
   "keywords": [
     "mcp",
@@ -39,9 +39,9 @@
   "author": "Wyre Technology",
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/wyre-technology/mcp-server-checkpoint-avanan/issues"
+    "url": "https://github.com/wyre-technology/avanan-mcp/issues"
   },
-  "homepage": "https://github.com/wyre-technology/mcp-server-checkpoint-avanan#readme",
+  "homepage": "https://github.com/wyre-technology/avanan-mcp#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.3"
   },
