@@ -1,3 +1,15 @@
+# 1.0.0 (2026-04-07)
+
+
+### Bug Fixes
+
+* align package name to avanan-mcp convention ([a997b3b](https://github.com/wyre-technology/avanan-mcp/commit/a997b3bcf939d8f13959ba59b9f5da05668164d9))
+
+
+### Features
+
+* initial scaffold with lazy loading meta-tools support ([eda4480](https://github.com/wyre-technology/avanan-mcp/commit/eda4480f0d962093a35a658915d0c885da6051eb))
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
