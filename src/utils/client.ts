@@ -6,10 +6,10 @@
  * - Scopes: GET /v1.0/scopes → available API scopes for this key
  * - Data: regional base URL derived from JWT region claim
  *
- * Required headers on all data requests:
+ * Required on all data requests:
  *   Authorization: Bearer {token}
  *   x-av-req-id: {fresh UUID per request}
- *   scopes: {scope string from /v1.0/scopes}
+ *   requestData.scopes: [scope] injected automatically from /v1.0/scopes
  */
 
 import { randomUUID } from "node:crypto";
@@ -119,14 +119,18 @@ async function refreshScopes(): Promise<void> {
   });
 
   if (!res.ok) {
-    logger.warn("Failed to fetch scopes, using empty scope", { status: res.status });
+    logger.warn("Failed to fetch scopes", { status: res.status });
     _scope = "";
     return;
   }
 
   const body = (await res.json()) as ApiResponse<string>;
-  _scope = (body.responseData?.[0] ?? "") as string;
-  logger.debug("Scopes fetched", { scope: _scope });
+  // Filter out empty strings — only keep valid service:name format scopes
+  const validScopes = (body.responseData ?? []).filter(
+    (s): s is string => typeof s === "string" && s.includes(":")
+  );
+  _scope = validScopes[0] ?? "";
+  logger.debug("Scopes fetched", { scope: _scope, all: body.responseData });
 }
 
 async function ensureAuth(): Promise<void> {
@@ -159,6 +163,14 @@ export async function apiRequest<T>(
 ): Promise<ApiResponse<T>> {
   await ensureAuth();
 
+  if (!_scope) {
+    throw new Error(
+      "No API scopes configured for this key. " +
+      "In the Checkpoint Infinity Portal, recreate the API key with Module set to " +
+      "'Harmony Email & Collaboration'. The current key's authorized scopes are empty."
+    );
+  }
+
   const url = new URL(`${_baseUrl}/app/hec-api${path}`);
   if (options.params) {
     for (const [k, v] of Object.entries(options.params)) {
@@ -170,7 +182,6 @@ export async function apiRequest<T>(
   const headers: Record<string, string> = {
     Authorization: `Bearer ${_token}`,
     "x-av-req-id": randomUUID(),
-    scopes: _scope,
     Accept: "application/json",
     "Content-Type": "application/json",
   };
@@ -182,7 +193,15 @@ export async function apiRequest<T>(
   };
 
   if (options.body !== undefined && method !== "GET") {
-    fetchOptions.body = JSON.stringify(options.body);
+    // Inject scopes into requestData per HEC Smart API v1.50 spec
+    let body = options.body as Record<string, unknown>;
+    if (_scope && body.requestData && typeof body.requestData === "object") {
+      body = {
+        ...body,
+        requestData: { scopes: [_scope], ...(body.requestData as Record<string, unknown>) },
+      };
+    }
+    fetchOptions.body = JSON.stringify(body);
   }
 
   logger.debug("HEC API request", { method, url: url.toString() });
