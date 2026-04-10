@@ -1,33 +1,38 @@
 /**
- * Checkpoint Harmony Email & Collaboration (Avanan) HTTP client and credential management.
+ * Checkpoint Harmony Email & Collaboration HTTP client.
  *
- * Authentication uses OAuth2 client credentials flow.
- * In gateway mode (AUTH_MODE=gateway), credentials are injected
- * into process.env by the HTTP transport layer from request headers.
+ * Implements the HEC Smart API v1.50:
+ * - Auth: POST /auth/external → JWT with region claim
+ * - Scopes: GET /v1.0/scopes → available API scopes for this key
+ * - Data: regional base URL derived from JWT region claim
  *
- * In env mode (AUTH_MODE=env or unset), credentials come from
- * CHECKPOINT_CLIENT_ID and CHECKPOINT_CLIENT_SECRET environment variables directly.
+ * Required headers on all data requests:
+ *   Authorization: Bearer {token}
+ *   x-av-req-id: {fresh UUID per request}
+ *   scopes: {scope string from /v1.0/scopes}
  */
 
+import { randomUUID } from "node:crypto";
 import { logger } from "./logger.js";
-import type { CheckpointCredentials } from "./types.js";
+import type { CheckpointCredentials, ApiResponse } from "./types.js";
+import { REGIONAL_BASE_URLS, DEFAULT_BASE_URL } from "./types.js";
 
-const CHECKPOINT_BASE_URL = "https://cloudinfra-gw.portal.checkpoint.com";
-const TOKEN_ENDPOINT = "/auth/external";
+const AUTH_PATH = "/auth/external";
+const SCOPES_PATH = "/app/hec-api/v1.0/scopes";
 
-let _accessToken: string | null = null;
+// Cached per-process state (invalidated when credentials change)
+let _token: string | null = null;
 let _tokenExpiresAt: number = 0;
-let _credentials: CheckpointCredentials | null = null;
+let _scope: string = "";
+let _baseUrl: string = DEFAULT_BASE_URL;
+let _lastCredentials: CheckpointCredentials | null = null;
 
-/**
- * Get credentials from environment variables
- */
 export function getCredentials(): CheckpointCredentials | null {
   const clientId = process.env.CHECKPOINT_CLIENT_ID;
   const clientSecret = process.env.CHECKPOINT_CLIENT_SECRET;
 
   if (!clientId || !clientSecret) {
-    logger.warn("Missing credentials", {
+    logger.warn("Missing Checkpoint credentials", {
       hasClientId: !!clientId,
       hasClientSecret: !!clientSecret,
     });
@@ -37,73 +42,112 @@ export function getCredentials(): CheckpointCredentials | null {
   return {
     clientId,
     clientSecret,
-    baseUrl: process.env.CHECKPOINT_BASE_URL || CHECKPOINT_BASE_URL,
+    region: process.env.CHECKPOINT_REGION,
   };
 }
 
-/**
- * Obtain an access token using client credentials.
- * Caches the token until it expires.
- */
-async function getAccessToken(creds: CheckpointCredentials): Promise<string> {
-  // Return cached token if still valid (with 60s buffer)
-  if (_accessToken && Date.now() < _tokenExpiresAt - 60_000) {
-    return _accessToken;
+function credentialsChanged(creds: CheckpointCredentials): boolean {
+  if (!_lastCredentials) return true;
+  return (
+    creds.clientId !== _lastCredentials.clientId ||
+    creds.clientSecret !== _lastCredentials.clientSecret
+  );
+}
+
+function decodeJwtRegion(token: string): string | null {
+  try {
+    const payload = token.split(".")[1];
+    const decoded = Buffer.from(payload, "base64url").toString("utf8");
+    const claims = JSON.parse(decoded) as Record<string, unknown>;
+    return typeof claims.region === "string" ? claims.region : null;
+  } catch {
+    return null;
   }
+}
 
-  logger.debug("Requesting new access token");
+async function refreshToken(creds: CheckpointCredentials): Promise<void> {
+  // Auth always goes to the global gateway regardless of region
+  const authUrl = `${DEFAULT_BASE_URL}${AUTH_PATH}`;
+  logger.debug("Requesting Checkpoint auth token", { authUrl });
 
-  const response = await fetch(`${creds.baseUrl}${TOKEN_ENDPOINT}`, {
+  const res = await fetch(authUrl, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({
-      clientId: creds.clientId,
-      accessKey: creds.clientSecret,
-    }),
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ clientId: creds.clientId, accessKey: creds.clientSecret }),
+    signal: AbortSignal.timeout(30_000),
   });
 
-  const rawText = await response.text();
-  let responseBody: unknown;
+  const raw = await res.text();
+  let body: Record<string, unknown>;
   try {
-    responseBody = JSON.parse(rawText);
+    body = JSON.parse(raw);
   } catch {
-    responseBody = rawText;
+    throw new Error(`Auth request failed (${res.status}): non-JSON response`);
   }
 
-  if (!response.ok) {
-    const message =
-      typeof responseBody === "object" &&
-      responseBody !== null &&
-      "message" in responseBody
-        ? String((responseBody as Record<string, unknown>).message)
-        : `HTTP ${response.status}: ${response.statusText}`;
-
-    logger.error("Token request failed", { status: response.status, message });
-    throw new Error(`Authentication failed: ${message}. Check your CHECKPOINT_CLIENT_ID and CHECKPOINT_CLIENT_SECRET.`);
+  if (!res.ok || !body.success) {
+    const msg = typeof body.message === "string" ? body.message : `HTTP ${res.status}`;
+    throw new Error(`Authentication failed: ${msg}`);
   }
 
-  const tokenData = responseBody as Record<string, unknown>;
-  const token = tokenData.data as Record<string, unknown>;
+  const data = body.data as Record<string, unknown>;
+  const token = data?.token as string;
+  if (!token) throw new Error("Auth response missing token");
 
-  if (!token || !token.token) {
-    throw new Error("Authentication response missing token field");
-  }
-
-  _accessToken = token.token as string;
-  // Default expiry of 30 minutes if not provided
-  const expiresIn = (token.expiresIn as number) || 1800;
+  _token = token;
+  // Tokens expire in 30 min; refresh 60s early
+  const expiresIn = (data.expiresIn as number) || 1800;
   _tokenExpiresAt = Date.now() + expiresIn * 1000;
 
-  logger.debug("Access token obtained", { expiresIn });
-  return _accessToken;
+  // Detect regional base URL from JWT
+  const region = creds.region || decodeJwtRegion(token);
+  _baseUrl = (region && REGIONAL_BASE_URLS[region]) || DEFAULT_BASE_URL;
+  logger.debug("Auth token obtained", { region, baseUrl: _baseUrl });
+}
+
+async function refreshScopes(): Promise<void> {
+  if (!_token) return;
+
+  const res = await fetch(`${_baseUrl}${SCOPES_PATH}`, {
+    headers: {
+      Authorization: `Bearer ${_token}`,
+      "x-av-req-id": randomUUID(),
+      scopes: "",
+      Accept: "application/json",
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!res.ok) {
+    logger.warn("Failed to fetch scopes, using empty scope", { status: res.status });
+    _scope = "";
+    return;
+  }
+
+  const body = (await res.json()) as ApiResponse<string>;
+  _scope = (body.responseData?.[0] ?? "") as string;
+  logger.debug("Scopes fetched", { scope: _scope });
+}
+
+async function ensureAuth(): Promise<void> {
+  const creds = getCredentials();
+  if (!creds) throw new Error("No Checkpoint credentials configured");
+
+  if (credentialsChanged(creds)) {
+    _token = null;
+    _tokenExpiresAt = 0;
+    _scope = "";
+    _lastCredentials = creds;
+  }
+
+  if (!_token || Date.now() >= _tokenExpiresAt - 60_000) {
+    await refreshToken(creds);
+    await refreshScopes();
+  }
 }
 
 /**
- * Make an authenticated HTTP request to the Checkpoint Harmony API.
- * Handles token acquisition and refresh automatically.
+ * Make an authenticated request to the HEC Smart API.
  */
 export async function apiRequest<T>(
   path: string,
@@ -112,104 +156,70 @@ export async function apiRequest<T>(
     body?: unknown;
     params?: Record<string, string | number | boolean | undefined>;
   } = {}
-): Promise<T> {
-  const creds = getCredentials();
-  if (!creds) {
-    throw new Error(
-      "No Checkpoint API credentials configured. Please set CHECKPOINT_CLIENT_ID and CHECKPOINT_CLIENT_SECRET environment variables."
-    );
-  }
+): Promise<ApiResponse<T>> {
+  await ensureAuth();
 
-  // Invalidate token cache if credentials changed
-  if (_credentials &&
-      (creds.clientId !== _credentials.clientId || creds.clientSecret !== _credentials.clientSecret)) {
-    _accessToken = null;
-    _tokenExpiresAt = 0;
-  }
-  _credentials = creds;
-
-  const accessToken = await getAccessToken(creds);
-
-  const url = new URL(path, creds.baseUrl);
-
+  const url = new URL(`${_baseUrl}/app/hec-api${path}`);
   if (options.params) {
-    for (const [key, value] of Object.entries(options.params)) {
-      if (value !== undefined) {
-        url.searchParams.set(key, String(value));
-      }
+    for (const [k, v] of Object.entries(options.params)) {
+      if (v !== undefined) url.searchParams.set(k, String(v));
     }
   }
 
-  const method = options.method || "GET";
+  const method = options.method ?? "GET";
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${accessToken}`,
-    "Content-Type": "application/json",
+    Authorization: `Bearer ${_token}`,
+    "x-av-req-id": randomUUID(),
+    scopes: _scope,
     Accept: "application/json",
-    "x-mgmt-api-token": accessToken,
+    "Content-Type": "application/json",
   };
 
   const fetchOptions: RequestInit = {
     method,
     headers,
+    signal: AbortSignal.timeout(30_000),
   };
 
   if (options.body !== undefined && method !== "GET") {
     fetchOptions.body = JSON.stringify(options.body);
   }
 
-  logger.debug("Checkpoint API request", { method, url: url.toString() });
+  logger.debug("HEC API request", { method, url: url.toString() });
+  const res = await fetch(url.toString(), fetchOptions);
 
-  const response = await fetch(url.toString(), fetchOptions);
-
-  // Safe: read text once, then try JSON parse
-  const rawText = await response.text();
-  let responseBody: unknown;
+  const raw = await res.text();
+  let body: unknown;
   try {
-    responseBody = JSON.parse(rawText);
+    body = JSON.parse(raw);
   } catch {
-    responseBody = rawText;
+    throw new Error(`HEC API returned non-JSON (${res.status}): ${raw.slice(0, 200)}`);
   }
 
-  if (!response.ok) {
-    const message =
-      typeof responseBody === "object" &&
-      responseBody !== null &&
-      "message" in responseBody
-        ? String((responseBody as Record<string, unknown>).message)
-        : `HTTP ${response.status}: ${response.statusText}`;
+  if (!res.ok) {
+    const msg =
+      body &&
+      typeof body === "object" &&
+      "message" in body
+        ? String((body as Record<string, unknown>).message)
+        : `HTTP ${res.status}`;
 
-    logger.error("Checkpoint API error", {
-      status: response.status,
-      url: url.toString(),
-      message,
-    });
-
-    if (response.status === 401) {
-      // Token may have expired, clear cache and retry once
-      _accessToken = null;
+    if (res.status === 401) {
+      // Force re-auth on next call
+      _token = null;
       _tokenExpiresAt = 0;
-      throw new Error(`Authentication failed: ${message}. Check your credentials.`);
     }
-    if (response.status === 403) {
-      throw new Error(`Forbidden: ${message}. Insufficient permissions.`);
-    }
-    if (response.status === 404) {
-      throw new Error(`Not found: ${message}`);
-    }
-    if (response.status === 429) {
-      throw new Error(`Rate limit exceeded: ${message}. Please retry after a moment.`);
-    }
-    throw new Error(`Checkpoint API error (${response.status}): ${message}`);
+
+    logger.error("HEC API error", { status: res.status, url: url.toString(), msg });
+    throw new Error(`HEC API error (${res.status}): ${msg}`);
   }
 
-  return responseBody as T;
+  return body as ApiResponse<T>;
 }
 
-/**
- * Clear cached credentials and tokens (useful for testing)
- */
 export function clearCredentials(): void {
-  _credentials = null;
-  _accessToken = null;
+  _token = null;
   _tokenExpiresAt = 0;
+  _scope = "";
+  _lastCredentials = null;
 }
