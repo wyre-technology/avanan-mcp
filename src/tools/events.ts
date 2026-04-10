@@ -9,6 +9,7 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { apiRequest } from "../utils/client.js";
 import type { HecEvent, ApiResponse } from "../utils/types.js";
 import type { CallToolResult } from "../utils/types.js";
+import { formatPagedResult } from "../utils/format.js";
 
 export const eventTools: Tool[] = [
   {
@@ -134,9 +135,6 @@ export async function handleEventTool(
 }
 
 function formatResult(result: ApiResponse<HecEvent>, label: string): CallToolResult {
-  const count = result.responseEnvelope.recordsNumber ?? result.responseData.length;
-  const scrollId = result.responseEnvelope.scrollId;
-
   const summary = result.responseData.map((e) => ({
     eventId: e.eventId,
     type: e.type,
@@ -148,15 +146,5 @@ function formatResult(result: ApiResponse<HecEvent>, label: string): CallToolRes
     confidenceIndicator: e.confidenceIndicator,
     availableActions: e.availableEventActions?.map((a) => a.actionName) ?? [],
   }));
-
-  const text = [
-    `Found ${count} ${label}${count !== 1 ? "s" : ""}.`,
-    scrollId ? `Next page scroll ID: ${scrollId}` : null,
-    "",
-    JSON.stringify(summary, null, 2),
-  ]
-    .filter((l) => l !== null)
-    .join("\n");
-
-  return { content: [{ type: "text", text }] };
+  return formatPagedResult(result, summary, label);
 }

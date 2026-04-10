@@ -26,13 +26,23 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { logger } from "./utils/logger.js";
-import { getCredentials, clearCredentials } from "./utils/client.js";
+import { getCredentials } from "./utils/client.js";
 import { eventTools, handleEventTool } from "./tools/events.js";
 import { searchTools, handleSearchTool } from "./tools/search.js";
 import { actionTools, handleActionTool } from "./tools/actions.js";
 import { exceptionTools, handleExceptionTool } from "./tools/exceptions.js";
+import type { CallToolResult } from "./utils/types.js";
 
 const ALL_TOOLS = [...eventTools, ...searchTools, ...actionTools, ...exceptionTools];
+
+// Pre-built map for O(1) tool dispatch instead of repeated Array.some() per request
+type ToolHandler = (name: string, args: Record<string, unknown>) => Promise<CallToolResult>;
+const TOOL_HANDLERS = new Map<string, ToolHandler>([
+  ...eventTools.map((t) => [t.name, handleEventTool] as [string, ToolHandler]),
+  ...searchTools.map((t) => [t.name, handleSearchTool] as [string, ToolHandler]),
+  ...actionTools.map((t) => [t.name, handleActionTool] as [string, ToolHandler]),
+  ...exceptionTools.map((t) => [t.name, handleExceptionTool] as [string, ToolHandler]),
+]);
 
 const server = new Server(
   { name: "mcp-server-checkpoint-harmony-email", version: "2.0.0" },
@@ -49,24 +59,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     const toolArgs = args as Record<string, unknown>;
+    const handler = TOOL_HANDLERS.get(name);
 
-    if (eventTools.some((t) => t.name === name)) {
-      return await handleEventTool(name, toolArgs);
-    }
-    if (searchTools.some((t) => t.name === name)) {
-      return await handleSearchTool(name, toolArgs);
-    }
-    if (actionTools.some((t) => t.name === name)) {
-      return await handleActionTool(name, toolArgs);
-    }
-    if (exceptionTools.some((t) => t.name === name)) {
-      return await handleExceptionTool(name, toolArgs);
+    if (!handler) {
+      return {
+        content: [{ type: "text", text: `Unknown tool: '${name}'` }],
+        isError: true,
+      };
     }
 
-    return {
-      content: [{ type: "text", text: `Unknown tool: '${name}'` }],
-      isError: true,
-    };
+    return await handler(name, toolArgs);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.error("Tool call failed", { tool: name, error: message });
@@ -127,13 +129,6 @@ async function startHttpTransport(): Promise<void> {
           return;
         }
 
-        // Inject credentials; clear cached token if they changed
-        if (
-          process.env.CHECKPOINT_CLIENT_ID !== clientId ||
-          process.env.CHECKPOINT_CLIENT_SECRET !== clientSecret
-        ) {
-          clearCredentials();
-        }
         process.env.CHECKPOINT_CLIENT_ID = clientId;
         process.env.CHECKPOINT_CLIENT_SECRET = clientSecret;
       }

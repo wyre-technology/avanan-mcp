@@ -6,6 +6,7 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { apiRequest } from "../utils/client.js";
 import type { HecEntity, ApiResponse } from "../utils/types.js";
 import type { CallToolResult } from "../utils/types.js";
+import { formatPagedResult } from "../utils/format.js";
 
 export const searchTools: Tool[] = [
   {
@@ -121,9 +122,6 @@ export async function handleSearchTool(
 }
 
 function formatResult(result: ApiResponse<HecEntity>): CallToolResult {
-  const count = result.responseEnvelope.recordsNumber ?? result.responseData.length;
-  const scrollId = result.responseEnvelope.scrollId;
-
   const summary = result.responseData.map((e) => ({
     entityId: e.entityInfo.entityId,
     saas: e.entityInfo.saas,
@@ -136,15 +134,5 @@ function formatResult(result: ApiResponse<HecEntity>): CallToolResult {
     verdict: e.entitySecurityResult?.combinedVerdict,
     availableActions: e.entityAvailableActions?.map((a) => a.entityActionName) ?? [],
   }));
-
-  const text = [
-    `Found ${count} email${count !== 1 ? "s" : ""}.`,
-    scrollId ? `Next page scroll ID: ${scrollId}` : null,
-    "",
-    JSON.stringify(summary, null, 2),
-  ]
-    .filter((l) => l !== null)
-    .join("\n");
-
-  return { content: [{ type: "text", text }] };
+  return formatPagedResult(result, summary, "email");
 }

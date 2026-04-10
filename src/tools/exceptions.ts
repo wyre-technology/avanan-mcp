@@ -136,12 +136,11 @@ export async function handleExceptionTool(
       method: "POST",
       body: { requestData: buildExceptionBody(args) },
     });
-    const count = result.responseEnvelope.responseCode;
     return {
       content: [
         {
           type: "text",
-          text: `Exception added to ${excType}. Response code: ${count}.\n${JSON.stringify(result.responseData, null, 2)}`,
+          text: `Exception added to ${excType}.\n${JSON.stringify(result.responseData, null, 2)}`,
         },
       ],
     };
