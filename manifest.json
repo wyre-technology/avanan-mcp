@@ -19,6 +19,7 @@
       "env": {
         "CHECKPOINT_CLIENT_ID": "${user_config.checkpoint_client_id}",
         "CHECKPOINT_CLIENT_SECRET": "${user_config.checkpoint_client_secret}",
+        "CHECKPOINT_REGION": "${user_config.checkpoint_region}",
         "MCP_TRANSPORT": "stdio"
       }
     }
@@ -37,6 +38,12 @@
       "description": "Your Checkpoint Harmony API client secret (access key)",
       "sensitive": true,
       "required": true
+    },
+    "checkpoint_region": {
+      "type": "string",
+      "title": "Region Override (optional)",
+      "description": "Force a specific region: us, eu, au, or in. Leave blank to auto-detect (recommended).",
+      "required": false
     }
   },
   "compatibility": {

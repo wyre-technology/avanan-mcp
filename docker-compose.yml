@@ -7,11 +7,14 @@ services:
     environment:
       - MCP_TRANSPORT=http
       - MCP_HTTP_PORT=8080
+      - MCP_HTTP_HOST=0.0.0.0
       - AUTH_MODE=${AUTH_MODE:-env}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # Required when AUTH_MODE=env
       - CHECKPOINT_CLIENT_ID=${CHECKPOINT_CLIENT_ID}
       - CHECKPOINT_CLIENT_SECRET=${CHECKPOINT_CLIENT_SECRET}
-      - CHECKPOINT_BASE_URL=${CHECKPOINT_BASE_URL:-https://cloudinfra-gw.portal.checkpoint.com}
-      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # Optional: force region (us | eu | au | in). Auto-detected when omitted.
+      - CHECKPOINT_REGION=${CHECKPOINT_REGION:-}
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
       interval: 30s
