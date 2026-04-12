@@ -106,30 +106,44 @@ async function refreshToken(creds: CheckpointCredentials): Promise<void> {
   logger.debug("Auth token obtained", { region, baseUrl: _baseUrl });
 }
 
-async function refreshScopes(): Promise<void> {
-  if (!_token) return;
-
-  const res = await fetch(`${_baseUrl}${SCOPES_PATH}`, {
+async function fetchScopesFromUrl(baseUrl: string): Promise<string[]> {
+  const res = await fetch(`${baseUrl}${SCOPES_PATH}`, {
     headers: {
-      Authorization: `Bearer ${_token}`,
+      Authorization: `Bearer ${_token!}`,
       "x-av-req-id": randomUUID(),
       Accept: "application/json",
     },
     signal: AbortSignal.timeout(10_000),
   });
-
-  if (!res.ok) {
-    logger.warn("Failed to fetch scopes", { status: res.status });
-    _scopes = [];
-    return;
-  }
-
+  if (!res.ok) return [];
   const body = (await res.json()) as ApiResponse<string>;
-  // Keep only valid farm:customer format scopes; discard empty strings
-  _scopes = (body.responseData ?? []).filter(
+  return (body.responseData ?? []).filter(
     (s): s is string => typeof s === "string" && s.includes(":")
   );
-  logger.debug("Scopes fetched", { scopes: _scopes });
+}
+
+async function refreshScopes(): Promise<void> {
+  if (!_token) return;
+
+  // Try the detected region first
+  let scopes = await fetchScopesFromUrl(_baseUrl);
+
+  // If no valid scopes, the JWT region claim may be wrong — try all other regions
+  if (scopes.length === 0) {
+    logger.warn("No scopes at detected region, probing all regions", { detected: _baseUrl });
+    for (const [region, url] of Object.entries(REGIONAL_BASE_URLS)) {
+      if (url === _baseUrl) continue;
+      scopes = await fetchScopesFromUrl(url);
+      if (scopes.length > 0) {
+        logger.info("Found scopes at alternate region", { region, url, scopes });
+        _baseUrl = url;
+        break;
+      }
+    }
+  }
+
+  _scopes = scopes;
+  logger.debug("Scopes fetched", { scopes: _scopes, baseUrl: _baseUrl });
 }
 
 async function ensureAuth(): Promise<void> {
