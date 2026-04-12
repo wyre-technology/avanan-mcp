@@ -1,15 +1,18 @@
 /**
  * Checkpoint Harmony Email & Collaboration HTTP client.
  *
- * Implements the HEC Smart API v1.50:
- * - Auth: POST /auth/external → JWT with region claim
- * - Scopes: GET /v1.0/scopes → available API scopes for this key
- * - Data: regional base URL derived from JWT region claim
+ * Implements the HEC Smart API v1.50.
  *
- * Required on all data requests:
+ * Auth: POST /auth/external → JWT with region claim
+ * Scopes: GET /v1.0/scopes → list of "farm:customer" pairs for this key
+ *   - Format: mt-prod-cp-eu-1:customername (EU), mt-prod-cp-1:customername (US)
+ *   - Multi-scope keys must specify which scope to use per request
+ *   - Single-scope keys can omit scopes (API uses the only available scope)
+ *   - Keys returning [""] have no HEC farm association — contact Checkpoint support
+ *
+ * Required headers on all data requests:
  *   Authorization: Bearer {token}
  *   x-av-req-id: {fresh UUID per request}
- *   requestData.scopes: [scope] injected automatically from /v1.0/scopes
  */
 
 import { randomUUID } from "node:crypto";
@@ -23,7 +26,8 @@ const SCOPES_PATH = "/app/hec-api/v1.0/scopes";
 // Cached per-process state (invalidated when credentials change)
 let _token: string | null = null;
 let _tokenExpiresAt: number = 0;
-let _scope: string = "";
+// All scopes available for this key (farm:customer pairs)
+let _scopes: string[] = [];
 let _baseUrl: string = DEFAULT_BASE_URL;
 let _lastCredentials: CheckpointCredentials | null = null;
 
@@ -66,7 +70,6 @@ function decodeJwtRegion(token: string): string | null {
 }
 
 async function refreshToken(creds: CheckpointCredentials): Promise<void> {
-  // Auth always goes to the global gateway regardless of region
   const authUrl = `${DEFAULT_BASE_URL}${AUTH_PATH}`;
   logger.debug("Requesting Checkpoint auth token", { authUrl });
 
@@ -95,11 +98,9 @@ async function refreshToken(creds: CheckpointCredentials): Promise<void> {
   if (!token) throw new Error("Auth response missing token");
 
   _token = token;
-  // Tokens expire in 30 min; refresh 60s early
   const expiresIn = (data.expiresIn as number) || 1800;
   _tokenExpiresAt = Date.now() + expiresIn * 1000;
 
-  // Detect regional base URL from JWT
   const region = creds.region || decodeJwtRegion(token);
   _baseUrl = (region && REGIONAL_BASE_URLS[region]) || DEFAULT_BASE_URL;
   logger.debug("Auth token obtained", { region, baseUrl: _baseUrl });
@@ -112,7 +113,6 @@ async function refreshScopes(): Promise<void> {
     headers: {
       Authorization: `Bearer ${_token}`,
       "x-av-req-id": randomUUID(),
-      scopes: "",
       Accept: "application/json",
     },
     signal: AbortSignal.timeout(10_000),
@@ -120,17 +120,16 @@ async function refreshScopes(): Promise<void> {
 
   if (!res.ok) {
     logger.warn("Failed to fetch scopes", { status: res.status });
-    _scope = "";
+    _scopes = [];
     return;
   }
 
   const body = (await res.json()) as ApiResponse<string>;
-  // Filter out empty strings — only keep valid service:name format scopes
-  const validScopes = (body.responseData ?? []).filter(
+  // Keep only valid farm:customer format scopes; discard empty strings
+  _scopes = (body.responseData ?? []).filter(
     (s): s is string => typeof s === "string" && s.includes(":")
   );
-  _scope = validScopes[0] ?? "";
-  logger.debug("Scopes fetched", { scope: _scope, all: body.responseData });
+  logger.debug("Scopes fetched", { scopes: _scopes });
 }
 
 async function ensureAuth(): Promise<void> {
@@ -140,7 +139,7 @@ async function ensureAuth(): Promise<void> {
   if (credentialsChanged(creds)) {
     _token = null;
     _tokenExpiresAt = 0;
-    _scope = "";
+    _scopes = [];
     _lastCredentials = creds;
   }
 
@@ -152,6 +151,9 @@ async function ensureAuth(): Promise<void> {
 
 /**
  * Make an authenticated request to the HEC Smart API.
+ *
+ * For multi-scope keys, scopes are injected into requestData automatically.
+ * Single-scope keys work without specifying scopes (API auto-selects).
  */
 export async function apiRequest<T>(
   path: string,
@@ -163,11 +165,10 @@ export async function apiRequest<T>(
 ): Promise<ApiResponse<T>> {
   await ensureAuth();
 
-  if (!_scope) {
-    throw new Error(
-      "No API scopes configured for this key. " +
-      "In the Checkpoint Infinity Portal, recreate the API key with Module set to " +
-      "'Harmony Email & Collaboration'. The current key's authorized scopes are empty."
+  if (_scopes.length === 0) {
+    logger.warn(
+      "No HEC scopes available for this key — key may lack farm association. " +
+      "Call /v1.0/scopes to diagnose. Expected format: farm:customer (e.g. mt-prod-cp-eu-1:myorg)"
     );
   }
 
@@ -180,31 +181,28 @@ export async function apiRequest<T>(
 
   const method = options.method ?? "GET";
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${_token}`,
+    Authorization: `Bearer ${_token!}`,
     "x-av-req-id": randomUUID(),
     Accept: "application/json",
     "Content-Type": "application/json",
   };
 
-  const fetchOptions: RequestInit = {
-    method,
-    headers,
-    signal: AbortSignal.timeout(30_000),
-  };
+  const fetchOptions: RequestInit = { method, headers, signal: AbortSignal.timeout(30_000) };
 
   if (options.body !== undefined && method !== "GET") {
-    // Inject scopes into requestData per HEC Smart API v1.50 spec
     let body = options.body as Record<string, unknown>;
-    if (_scope && body.requestData && typeof body.requestData === "object") {
+    // For multi-scope keys, inject scopes into requestData so the API can route correctly.
+    // Single-scope keys: API picks the only scope automatically when omitted.
+    if (_scopes.length > 1 && body.requestData && typeof body.requestData === "object") {
       body = {
         ...body,
-        requestData: { scopes: [_scope], ...(body.requestData as Record<string, unknown>) },
+        requestData: { scopes: _scopes, ...(body.requestData as Record<string, unknown>) },
       };
     }
     fetchOptions.body = JSON.stringify(body);
   }
 
-  logger.debug("HEC API request", { method, url: url.toString() });
+  logger.debug("HEC API request", { method, url: url.toString(), scopes: _scopes });
   const res = await fetch(url.toString(), fetchOptions);
 
   const raw = await res.text();
@@ -216,18 +214,17 @@ export async function apiRequest<T>(
   }
 
   if (!res.ok) {
-    const msg =
-      body &&
-      typeof body === "object" &&
-      "message" in body
-        ? String((body as Record<string, unknown>).message)
-        : `HTTP ${res.status}`;
-
     if (res.status === 401) {
-      // Force re-auth on next call
       _token = null;
       _tokenExpiresAt = 0;
     }
+
+    // Surface the full responseText for Checkpoint API errors (more informative than message)
+    const apiBody = body as Record<string, unknown>;
+    const envelope = apiBody?.responseEnvelope as Record<string, unknown> | undefined;
+    const msg = envelope?.responseText
+      ? String(envelope.responseText)
+      : `HTTP ${res.status}`;
 
     logger.error("HEC API error", { status: res.status, url: url.toString(), msg });
     throw new Error(`HEC API error (${res.status}): ${msg}`);
@@ -239,6 +236,6 @@ export async function apiRequest<T>(
 export function clearCredentials(): void {
   _token = null;
   _tokenExpiresAt = 0;
-  _scope = "";
+  _scopes = [];
   _lastCredentials = null;
 }
