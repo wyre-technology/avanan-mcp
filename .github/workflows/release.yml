@@ -39,11 +39,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # Use PAT so @semantic-release/git can push the version commit back
-          # to main despite branch protection requiring PRs.
-          # GITHUB_TOKEN cannot bypass branch protection — GH_TOKEN must be a
-          # PAT (classic) with repo scope created by an admin.
-          token: ${{ secrets.GH_TOKEN }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -53,7 +48,7 @@ jobs:
       - name: Semantic release
         run: npx semantic-release
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - id: version
         run: |
           VERSION=$(node -p "require('./package.json').version")
