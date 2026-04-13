@@ -17,6 +17,7 @@
 
 import { randomUUID } from "node:crypto";
 import { logger } from "./logger.js";
+import { getRequestCredentials } from "./credential-store.js";
 import type { CheckpointCredentials, ApiResponse } from "./types.js";
 import { REGIONAL_BASE_URLS, DEFAULT_BASE_URL } from "./types.js";
 
@@ -31,7 +32,22 @@ let _scopes: string[] = [];
 let _baseUrl: string = DEFAULT_BASE_URL;
 let _lastCredentials: CheckpointCredentials | null = null;
 
+/**
+ * Get credentials from the per-request store (gateway mode) or
+ * environment variables (stdio / env mode).
+ */
 export function getCredentials(): CheckpointCredentials | null {
+  // Per-request credentials take priority (gateway HTTP mode)
+  const reqCreds = getRequestCredentials();
+  if (reqCreds) {
+    return {
+      clientId: reqCreds.clientId,
+      clientSecret: reqCreds.clientSecret,
+      region: reqCreds.region || process.env.CHECKPOINT_REGION,
+    };
+  }
+
+  // Fall back to environment variables
   const clientId = process.env.CHECKPOINT_CLIENT_ID;
   const clientSecret = process.env.CHECKPOINT_CLIENT_SECRET;
 
