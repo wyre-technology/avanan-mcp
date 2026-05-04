@@ -91,7 +91,17 @@ export const exceptionTools: Tool[] = [
   },
   {
     name: "hec_delete_exception",
-    description: "Delete a whitelist or blacklist entry by its entity ID.",
+    description:
+      "⚠ DESTRUCTIVE — IRREVERSIBLE. Delete a whitelist or blacklist entry by its entity ID. " +
+      "This action cannot be undone and will permanently remove the exception from security policy. " +
+      "Confirm with the user before invoking.",
+    annotations: {
+      title: "Delete exception (irreversible)",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {
