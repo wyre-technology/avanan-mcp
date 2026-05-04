@@ -12,7 +12,16 @@ export const actionTools: Tool[] = [
   {
     name: "hec_quarantine_events",
     description:
-      "Quarantine one or more security events by event ID. Returns task IDs to track progress.",
+      "⚠ HIGH-IMPACT. Quarantine one or more security events by event ID. " +
+      "Quarantining is reversible via restore but affects user access to events. " +
+      "Returns task IDs to track progress. Confirm with the user before invoking.",
+    annotations: {
+      title: "Quarantine events (reversible)",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {
@@ -46,7 +55,16 @@ export const actionTools: Tool[] = [
   {
     name: "hec_quarantine_emails",
     description:
-      "Quarantine specific email entities by entity ID. Returns task IDs to track progress.",
+      "⚠ HIGH-IMPACT. Quarantine specific email entities by entity ID. " +
+      "Quarantining is reversible via restore but affects user access to emails. " +
+      "Returns task IDs to track progress. Confirm with the user before invoking.",
+    annotations: {
+      title: "Quarantine emails (reversible)",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {
