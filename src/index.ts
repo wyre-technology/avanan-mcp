@@ -103,13 +103,22 @@ async function startHttpTransport(): Promise<void> {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 
     if (url.pathname === "/health") {
-      const creds = getCredentials();
-      res.writeHead(creds ? 200 : 503, { "Content-Type": "application/json" });
+      // Liveness probe: HTTP server is bound and accepting requests. Always
+      // 200 as long as we got here. In gateway/multi-tenant mode the upstream
+      // creds arrive per-request via headers, so the absence of process-env
+      // creds is normal — gating liveness on them caused a crash-loop on
+      // ACA (probe → 503 → kill → restart → repeat). The diagnostic value
+      // of "are upstream env creds present?" is preserved as a separate
+      // field that operators can inspect without it being load-bearing on
+      // the probe.
+      const hasEnvCreds = !!process.env.CHECKPOINT_CLIENT_ID && !!process.env.CHECKPOINT_CLIENT_SECRET;
+      res.writeHead(200, { "Content-Type": "application/json" });
       res.end(
         JSON.stringify({
-          status: creds ? "ok" : "degraded",
+          status: "ok",
           transport: "http",
           authMode: isGatewayMode ? "gateway" : "env",
+          envCredentialsConfigured: hasEnvCreds,
           version: "2.0.0",
           timestamp: new Date().toISOString(),
         })
