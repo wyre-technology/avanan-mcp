@@ -25,7 +25,6 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { logger } from "./utils/logger.js";
-import { getCredentials } from "./utils/client.js";
 import { credentialStore } from "./utils/credential-store.js";
 import { eventTools, handleEventTool } from "./tools/events.js";
 import { searchTools, handleSearchTool } from "./tools/search.js";
