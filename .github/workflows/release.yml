@@ -6,156 +6,37 @@ on:
   pull_request:
     branches: [main]
 
+# Thin caller for the canonical reusable release pipeline. The build →
+# semantic-release → Docker → MCP Registry → security chain (tag-based release
+# detection + correct gating) lives in wyre-technology/.github so every *-mcp
+# repo stays in lockstep instead of drifting per-repo. PR-time lint/test gating
+# is each repo's ci.yml concern; this workflow only runs the release path.
+# Caller jobs grant the token scopes the reusable jobs request (a reusable can
+# only reduce, never expand, caller-granted scope).
 jobs:
-  test:
-    name: Test
-    # Delegated to the canonical reusable CI workflow.
-    # See: ~/.claude/skills/mcp-server-fleet-ci-template
-    uses: wyre-technology/.github/.github/workflows/mcp-server-ci.yml@198605d0575e27374cf9b67fba3aa8c7b91de2c0
-    with:
-      node-versions: '["20", "22"]'
-      lint-destructive-warnings: true
-    secrets: inherit
-
   release:
-    name: Release
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
     permissions:
       contents: write
       issues: write
       packages: write
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      released: ${{ steps.version.outputs.released }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - name: Semantic release
-        run: npx semantic-release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - id: version
-        run: |
-          git fetch --tags
-          LATEST_TAG=$(git tag --sort=-creatordate | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)
-          if [ -z "$LATEST_TAG" ]; then
-            echo "released=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          VERSION="${LATEST_TAG#v}"
-          TAG_SHA=$(git rev-list -n 1 "$LATEST_TAG")
-          if [ "$TAG_SHA" = "$GITHUB_SHA" ]; then
-            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-            echo "released=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-            echo "released=false" >> "$GITHUB_OUTPUT"
-          fi
+      id-token: write
+      security-events: write
+    uses: wyre-technology/.github/.github/workflows/mcp-server-release.yml@7794e75666ac4956274f7a7d25dabacd56c96bbc
+    with:
+      server-name: avanan-mcp
+      image-name: ghcr.io/wyre-technology/avanan-mcp
+    secrets: inherit
 
-  docker:
-    name: Docker
-    needs: [test, release]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-      - name: Resolve release version
-        id: version
-        env:
-          RELEASE_VERSION: ${{ needs.release.outputs.version }}
-        run: |
-          if [ -z "$RELEASE_VERSION" ]; then
-            echo "ERROR: needs.release.outputs.version is empty" >&2
-            exit 1
-          fi
-          echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GHCR_PAT }}
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:v${{ steps.version.outputs.version }}
-
-  mcp-registry:
-    name: Publish to MCP Registry
-    runs-on: ubuntu-latest
-    needs: [release, docker]
+  deploy:
+    needs: release
     if: needs.release.outputs.released == 'true'
     permissions:
       id-token: write
       contents: read
-    env:
-      VERSION: ${{ needs.release.outputs.version }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
-      - name: Install mcp-publisher
-        run: |
-          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
-            | tar xz mcp-publisher
-      - name: Stamp version into server.json
-        run: |
-          jq --arg v "$VERSION" \
-            '.version = $v | .packages[0].identifier = "ghcr.io/wyre-technology/avanan-mcp:v" + $v' \
-            server.json > server.json.tmp
-          mv server.json.tmp server.json
-          cat server.json
-      - name: Validate server.json
-        run: ./mcp-publisher validate
-      - name: Authenticate to MCP Registry (GitHub OIDC)
-        run: ./mcp-publisher login github-oidc
-      - name: Publish to MCP Registry
-        run: ./mcp-publisher publish
-      - name: Verify registry listing
-        run: |
-          sleep 5
-          curl -sf "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.wyre-technology/avanan-mcp" \
-            | jq '.servers[]?.server | {name, version}'
-
-  deploy:
-    name: Deploy to Azure Container Apps
-    runs-on: ubuntu-latest
-    needs: [docker]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    environment: production
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - name: Azure login (OIDC)
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2.3.0
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Deploy to Azure Container Apps
-        run: |
-          SHORT_SHA="${GITHUB_SHA::7}"
-          IMAGE="ghcr.io/${{ github.repository }}:latest"
-          echo "Deploying $IMAGE to gwp-avanan (revision tag sha-${SHORT_SHA}-${GITHUB_RUN_ID})"
-          az containerapp update \
-            --name gwp-avanan \
-            --resource-group mcp-gateway-prod \
-            --image "$IMAGE" \
-            --set-env-vars "IMAGE_VERSION=sha-${SHORT_SHA}-${GITHUB_RUN_ID}"
+    uses: wyre-technology/.github/.github/workflows/mcp-server-deploy.yml@7794e75666ac4956274f7a7d25dabacd56c96bbc
+    with:
+      vendor-slug: avanan
+      image-name: ghcr.io/wyre-technology/avanan-mcp
+      digest: ${{ needs.release.outputs.digest }}
+      version: ${{ needs.release.outputs.version }}
+    secrets: inherit
