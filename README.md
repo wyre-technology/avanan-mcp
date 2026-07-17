@@ -9,6 +9,10 @@ This is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 
 > **Part of the [MSP Claude Plugins](https://github.com/wyre-technology) ecosystem** — a growing suite of AI integrations for the MSP stack. Built by MSPs, for MSPs.
 
+## Features
+
+- **Interactive Security Event Card (MCP Apps)**: `hec_get_event` renders as a read-only interactive card in MCP Apps hosts (Claude Desktop/web) showing severity, state, platform, and remediation status; neutral by default, brandable via `window.__BRAND__` injection or `MCP_BRAND_*` env vars; plain-JSON behavior is unchanged in other hosts
+
 ## Installation
 
 ```bash

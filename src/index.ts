@@ -26,6 +26,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { logger } from "./utils/logger.js";
 import { credentialStore } from "./utils/credential-store.js";
+import { registerResourceHandlers } from "./resources.js";
 import { eventTools, handleEventTool } from "./tools/events.js";
 import { searchTools, handleSearchTool } from "./tools/search.js";
 import { actionTools, handleActionTool } from "./tools/actions.js";
@@ -50,8 +51,11 @@ const TOOL_HANDLERS = new Map<string, ToolHandler>([
 function createMcpServer(): Server {
   const server = new Server(
     { name: "mcp-server-checkpoint-harmony-email", version: "2.0.0" },
-    { capabilities: { tools: {} } }
+    { capabilities: { tools: {}, resources: {} } }
   );
+
+  // MCP Apps (SEP-1865): serves the ui:// security event card.
+  registerResourceHandlers(server);
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return { tools: ALL_TOOLS };
