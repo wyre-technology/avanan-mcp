@@ -10,6 +10,7 @@ import { apiRequest } from "../utils/client.js";
 import type { HecEvent, ApiResponse } from "../utils/types.js";
 import type { CallToolResult } from "../utils/types.js";
 import { formatPagedResult } from "../utils/format.js";
+import { buildEventCard, EVENT_CARD_META } from "../card.builder.js";
 
 export const eventTools: Tool[] = [
   {
@@ -92,6 +93,7 @@ export const eventTools: Tool[] = [
   {
     name: "hec_get_event",
     description: "Get full details for a specific security event by ID.",
+    _meta: EVENT_CARD_META,
     inputSchema: {
       type: "object",
       properties: {
@@ -128,14 +130,18 @@ export async function handleEventTool(
   if (name === "hec_get_event") {
     const eventId = args.eventId as string;
     const result = await apiRequest<HecEvent>(`/v1.0/event/${encodeURIComponent(eventId)}`);
-    return formatResult(result, "event");
+    return formatResult(result, "event", { withCard: true });
   }
 
   throw new Error(`Unknown event tool: ${name}`);
 }
 
-function formatResult(result: ApiResponse<HecEvent>, label: string): CallToolResult {
-  const summary = result.responseData.map((e) => ({
+function formatResult(
+  result: ApiResponse<HecEvent>,
+  label: string,
+  opts?: { withCard?: boolean }
+): CallToolResult {
+  const summary: Array<Record<string, unknown>> = result.responseData.map((e) => ({
     eventId: e.eventId,
     type: e.type,
     state: e.state,
@@ -146,5 +152,18 @@ function formatResult(result: ApiResponse<HecEvent>, label: string): CallToolRes
     confidenceIndicator: e.confidenceIndicator,
     availableActions: e.availableEventActions?.map((a) => a.actionName) ?? [],
   }));
+
+  // MCP Apps (SEP-1865): attach the normalized card payload the ui:// security
+  // event card renders from. Best-effort — a null card just means no UI
+  // surface; the model-visible payload is otherwise unchanged.
+  if (opts?.withCard && summary.length > 0) {
+    try {
+      const card = buildEventCard(result.responseData[0]);
+      if (card) summary[0]._card = card;
+    } catch {
+      // Card building must never break the tool result.
+    }
+  }
+
   return formatPagedResult(result, summary, label);
 }

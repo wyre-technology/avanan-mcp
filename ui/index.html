@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Avanan Security Event Card</title>
+    <style>
+      /* Brand tokens. Defaults are deliberately neutral (this is a published
+         server); an operator or gateway can rebrand per-tenant by injecting
+         window.__BRAND__ — see the injection marker at the end of <head>,
+         event-card.ts, and the MCP_BRAND_* env vars in card.builder.ts. */
+      :root {
+        --brand-primary: #2563eb; /* headings, links, status accent */
+        --brand-accent: #e5e7eb;  /* fills / badges */
+        --brand-bg: #ffffff;
+        --brand-text: #1f2937;
+        --brand-muted: #6b7280;
+        --brand-line: #e5e7eb;
+        --brand-font-heading: system-ui, -apple-system, "Segoe UI", sans-serif;
+        --brand-font-body: system-ui, -apple-system, "Segoe UI", sans-serif;
+        --brand-radius: 6px;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--brand-bg);
+        color: var(--brand-text);
+        font-family: var(--brand-font-body);
+        font-size: 15px;
+        line-height: 1.5;
+        padding: 16px;
+      }
+      .card {
+        max-width: 560px;
+        border: 1px solid var(--brand-line);
+        border-radius: var(--brand-radius);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        overflow: hidden;
+      }
+      .card__bar { height: 4px; background: var(--brand-primary); }
+      .card__body { padding: 20px 24px 24px; }
+      .brandrow {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+      .brandid { display: flex; align-items: center; gap: 8px; }
+      .brandid img { height: 18px; width: auto; display: none; }
+      .brand {
+        font-family: var(--brand-font-heading);
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        color: var(--brand-text);
+        font-size: 15px;
+      }
+      .source {
+        font-family: var(--brand-font-heading);
+        color: var(--brand-muted);
+        font-size: 13px;
+        letter-spacing: 0.04em;
+      }
+      h1 {
+        font-family: var(--brand-font-heading);
+        color: var(--brand-primary);
+        font-weight: 600;
+        font-size: 21px;
+        line-height: 1.15;
+        margin: 0 0 16px;
+      }
+      .badges { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+      .badge {
+        font-family: var(--brand-font-heading);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 4px 10px;
+        border-radius: var(--brand-radius);
+        border: 1px solid var(--brand-line);
+        color: var(--brand-text);
+      }
+      .badge--sev { background: var(--brand-accent); border-color: var(--brand-accent); }
+      .badge--state { border-color: var(--brand-primary); color: var(--brand-primary); }
+      .desc {
+        font-size: 14px;
+        padding: 8px 10px;
+        background: #fafafa;
+        border-left: 2px solid var(--brand-primary);
+        margin-bottom: 18px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px 24px;
+        margin-bottom: 18px;
+      }
+      .field__label {
+        font-family: var(--brand-font-heading);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-size: 11px;
+        color: var(--brand-muted);
+        margin-bottom: 2px;
+      }
+      .field__value { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+      .actions { border-top: 1px solid var(--brand-line); padding-top: 14px; }
+      .actions__h {
+        font-family: var(--brand-font-heading);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-size: 11px;
+        color: var(--brand-muted);
+        margin-bottom: 8px;
+      }
+      .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+      .chip {
+        font-family: var(--brand-font-heading);
+        font-size: 12px;
+        padding: 3px 10px;
+        border-radius: var(--brand-radius);
+        border: 1px solid var(--brand-line);
+        color: var(--brand-muted);
+      }
+      .chip--taken { background: var(--brand-accent); border-color: var(--brand-accent); color: var(--brand-text); }
+      .actions__hint { font-size: 12px; color: var(--brand-muted); font-style: italic; }
+      .loading { color: var(--brand-muted); font-style: italic; }
+    </style>
+    <!-- BRAND_INJECT: a server/gateway replaces this comment with
+         <script>window.__BRAND__={name,logoUrl,primaryColor,accentColor,bg,text}</script>
+         to theme the card per-tenant (this server does so from MCP_BRAND_* env
+         vars — see card.builder.ts). No injection = neutral defaults above. -->
+  </head>
+  <body>
+    <div id="root"><p class="loading">Loading security event…</p></div>
+    <script type="module" src="./event-card.ts"></script>
+  </body>
+</html>
