@@ -17,20 +17,30 @@
 
 import { randomUUID } from "node:crypto";
 import { logger } from "./logger.js";
-import { getRequestCredentials } from "./credential-store.js";
+import {
+  getRequestCredentials,
+  getRequestTokenState,
+  createDerivedTokenState,
+  type DerivedTokenState,
+} from "./credential-store.js";
 import type { CheckpointCredentials, ApiResponse } from "./types.js";
 import { REGIONAL_BASE_URLS, DEFAULT_BASE_URL } from "./types.js";
 
 const AUTH_PATH = "/auth/external";
 const SCOPES_PATH = "/app/hec-api/v1.0/scopes";
 
-// Cached per-process state (invalidated when credentials change)
-let _token: string | null = null;
-let _tokenExpiresAt: number = 0;
-// All scopes available for this key (farm:customer pairs)
-let _scopes: string[] = [];
-let _baseUrl: string = DEFAULT_BASE_URL;
-let _lastCredentials: CheckpointCredentials | null = null;
+// Fallback derived-token cache for stdio/env mode only, where a single
+// process serves exactly one tenant's credentials for its entire lifetime
+// (there is no concurrent multi-tenant traffic to race). Gateway (HTTP,
+// multi-tenant) mode never touches this: it gets its own per-request
+// DerivedTokenState from credential-store.ts's AsyncLocalStorage instead,
+// so concurrent tenants can never observe or overwrite each other's
+// token/scopes/baseUrl.
+let _fallbackTokenState: DerivedTokenState = createDerivedTokenState();
+
+function getTokenState(): DerivedTokenState {
+  return getRequestTokenState() ?? _fallbackTokenState;
+}
 
 /**
  * Get credentials from the per-request store (gateway mode) or
@@ -66,11 +76,11 @@ export function getCredentials(): CheckpointCredentials | null {
   };
 }
 
-function credentialsChanged(creds: CheckpointCredentials): boolean {
-  if (!_lastCredentials) return true;
+function credentialsChanged(creds: CheckpointCredentials, state: DerivedTokenState): boolean {
+  if (!state.lastCredentials) return true;
   return (
-    creds.clientId !== _lastCredentials.clientId ||
-    creds.clientSecret !== _lastCredentials.clientSecret
+    creds.clientId !== state.lastCredentials.clientId ||
+    creds.clientSecret !== state.lastCredentials.clientSecret
   );
 }
 
@@ -85,7 +95,7 @@ function decodeJwtRegion(token: string): string | null {
   }
 }
 
-async function refreshToken(creds: CheckpointCredentials): Promise<void> {
+async function refreshToken(creds: CheckpointCredentials, state: DerivedTokenState): Promise<void> {
   const authUrl = `${DEFAULT_BASE_URL}${AUTH_PATH}`;
   logger.debug("Requesting Checkpoint auth token", { authUrl });
 
@@ -113,19 +123,22 @@ async function refreshToken(creds: CheckpointCredentials): Promise<void> {
   const token = data?.token as string;
   if (!token) throw new Error("Auth response missing token");
 
-  _token = token;
+  // `state` was captured by the caller before this function's first await,
+  // so this write always lands on the request that requested it — even if
+  // another tenant's refreshToken() call resolves in between.
+  state.token = token;
   const expiresIn = (data.expiresIn as number) || 1800;
-  _tokenExpiresAt = Date.now() + expiresIn * 1000;
+  state.tokenExpiresAt = Date.now() + expiresIn * 1000;
 
   const region = creds.region || decodeJwtRegion(token);
-  _baseUrl = (region && REGIONAL_BASE_URLS[region]) || DEFAULT_BASE_URL;
-  logger.debug("Auth token obtained", { region, baseUrl: _baseUrl });
+  state.baseUrl = (region && REGIONAL_BASE_URLS[region]) || DEFAULT_BASE_URL;
+  logger.debug("Auth token obtained", { region, baseUrl: state.baseUrl });
 }
 
-async function fetchScopesFromUrl(baseUrl: string): Promise<string[]> {
+async function fetchScopesFromUrl(baseUrl: string, token: string): Promise<string[]> {
   const res = await fetch(`${baseUrl}${SCOPES_PATH}`, {
     headers: {
-      Authorization: `Bearer ${_token!}`,
+      Authorization: `Bearer ${token}`,
       "x-av-req-id": randomUUID(),
       Accept: "application/json",
     },
@@ -138,45 +151,52 @@ async function fetchScopesFromUrl(baseUrl: string): Promise<string[]> {
   );
 }
 
-async function refreshScopes(): Promise<void> {
-  if (!_token) return;
+async function refreshScopes(state: DerivedTokenState): Promise<void> {
+  if (!state.token) return;
 
   // Try the detected region first
-  let scopes = await fetchScopesFromUrl(_baseUrl);
+  let scopes = await fetchScopesFromUrl(state.baseUrl, state.token);
 
   // If no valid scopes, the JWT region claim may be wrong — try all other regions
   if (scopes.length === 0) {
-    logger.warn("No scopes at detected region, probing all regions", { detected: _baseUrl });
+    logger.warn("No scopes at detected region, probing all regions", { detected: state.baseUrl });
     for (const [region, url] of Object.entries(REGIONAL_BASE_URLS)) {
-      if (url === _baseUrl) continue;
-      scopes = await fetchScopesFromUrl(url);
+      if (url === state.baseUrl) continue;
+      scopes = await fetchScopesFromUrl(url, state.token);
       if (scopes.length > 0) {
         logger.info("Found scopes at alternate region", { region, url, scopes });
-        _baseUrl = url;
+        state.baseUrl = url;
         break;
       }
     }
   }
 
-  _scopes = scopes;
-  logger.debug("Scopes fetched", { scopes: _scopes, baseUrl: _baseUrl });
+  state.scopes = scopes;
+  logger.debug("Scopes fetched", { scopes: state.scopes, baseUrl: state.baseUrl });
 }
 
-async function ensureAuth(): Promise<void> {
+async function ensureAuth(): Promise<DerivedTokenState> {
   const creds = getCredentials();
   if (!creds) throw new Error("No Checkpoint credentials configured");
 
-  if (credentialsChanged(creds)) {
-    _token = null;
-    _tokenExpiresAt = 0;
-    _scopes = [];
-    _lastCredentials = creds;
+  // Captured once, up front — every read/write below (including across
+  // awaits in refreshToken/refreshScopes) goes through this same object
+  // reference, which is exclusive to this request context.
+  const state = getTokenState();
+
+  if (credentialsChanged(creds, state)) {
+    state.token = null;
+    state.tokenExpiresAt = 0;
+    state.scopes = [];
+    state.lastCredentials = { clientId: creds.clientId, clientSecret: creds.clientSecret };
   }
 
-  if (!_token || Date.now() >= _tokenExpiresAt - 60_000) {
-    await refreshToken(creds);
-    await refreshScopes();
+  if (!state.token || Date.now() >= state.tokenExpiresAt - 60_000) {
+    await refreshToken(creds, state);
+    await refreshScopes(state);
   }
+
+  return state;
 }
 
 /**
@@ -193,16 +213,16 @@ export async function apiRequest<T>(
     params?: Record<string, string | number | boolean | undefined>;
   } = {}
 ): Promise<ApiResponse<T>> {
-  await ensureAuth();
+  const state = await ensureAuth();
 
-  if (_scopes.length === 0) {
+  if (state.scopes.length === 0) {
     logger.warn(
       "No HEC scopes available for this key — key may lack farm association. " +
       "Call /v1.0/scopes to diagnose. Expected format: farm:customer (e.g. mt-prod-cp-eu-1:myorg)"
     );
   }
 
-  const url = new URL(`${_baseUrl}/app/hec-api${path}`);
+  const url = new URL(`${state.baseUrl}/app/hec-api${path}`);
   if (options.params) {
     for (const [k, v] of Object.entries(options.params)) {
       if (v !== undefined) url.searchParams.set(k, String(v));
@@ -211,7 +231,7 @@ export async function apiRequest<T>(
 
   const method = options.method ?? "GET";
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${_token!}`,
+    Authorization: `Bearer ${state.token!}`,
     "x-av-req-id": randomUUID(),
     Accept: "application/json",
     "Content-Type": "application/json",
@@ -223,16 +243,16 @@ export async function apiRequest<T>(
     let body = options.body as Record<string, unknown>;
     // For multi-scope keys, inject scopes into requestData so the API can route correctly.
     // Single-scope keys: API picks the only scope automatically when omitted.
-    if (_scopes.length > 1 && body.requestData && typeof body.requestData === "object") {
+    if (state.scopes.length > 1 && body.requestData && typeof body.requestData === "object") {
       body = {
         ...body,
-        requestData: { scopes: _scopes, ...(body.requestData as Record<string, unknown>) },
+        requestData: { scopes: state.scopes, ...(body.requestData as Record<string, unknown>) },
       };
     }
     fetchOptions.body = JSON.stringify(body);
   }
 
-  logger.debug("HEC API request", { method, url: url.toString(), scopes: _scopes });
+  logger.debug("HEC API request", { method, url: url.toString(), scopes: state.scopes });
   const res = await fetch(url.toString(), fetchOptions);
 
   const raw = await res.text();
@@ -245,8 +265,8 @@ export async function apiRequest<T>(
 
   if (!res.ok) {
     if (res.status === 401) {
-      _token = null;
-      _tokenExpiresAt = 0;
+      state.token = null;
+      state.tokenExpiresAt = 0;
     }
 
     // Surface the full responseText for Checkpoint API errors (more informative than message)
@@ -264,8 +284,8 @@ export async function apiRequest<T>(
 }
 
 export function clearCredentials(): void {
-  _token = null;
-  _tokenExpiresAt = 0;
-  _scopes = [];
-  _lastCredentials = null;
+  // Only ever clears the single-tenant fallback (stdio/env mode). Gateway
+  // requests own their DerivedTokenState for the life of the request only —
+  // there is nothing module-level for a gateway request to clear.
+  _fallbackTokenState = createDerivedTokenState();
 }

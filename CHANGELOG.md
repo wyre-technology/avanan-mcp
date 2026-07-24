@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Fixed a cross-tenant credential leak in gateway (multi-tenant) mode.** `src/utils/client.ts` cached the derived OAuth bearer token, scopes, and resolved base URL (fetched from Checkpoint's `/auth/external` and `/v1.0/scopes` endpoints) in module-level variables shared by the whole process. Raw per-request credentials were already correctly isolated per tenant via `AsyncLocalStorage`, but this *derived* layer was not: under concurrent multi-tenant load, one tenant's in-flight token refresh could be overwritten by another tenant's concurrent refresh before the first tenant's request read it back, causing that request to authenticate with — and receive data scoped to — a different tenant's credentials. Confirmed exploitable in production (this sidecar is live in `conduit-prod`).
+  - Fix: the derived token/scopes/baseUrl cache now lives inside the same `AsyncLocalStorage` request context as the raw credentials (`src/utils/credential-store.ts`), via a new `runWithRequestCredentials()` helper used by the gateway HTTP handler. Each gateway request gets its own isolated cache; the stdio/env (single-tenant) code path keeps a lazily-initialized module-level fallback, since there's no concurrent multi-tenant traffic to race in that mode. No module-level mutable state holding tenant-derived secrets remains in the gateway request path.
+  - Added a regression test (`src/utils/client.test.ts`) that deterministically forces two tenants' requests to interleave (via a manually-resolved deferred, not a timer) so tenant B's request runs to completion while tenant A's is still in flight, then asserts the actual token/base URL values each tenant's outbound API call used. The test fails against the pre-fix implementation and passes against the fix.
+
 ### Added
 
 - **Interactive security event card via MCP Apps (SEP-1865).** `hec_get_event` results now render as an interactive card in MCP Apps hosts (Claude Desktop/web, and other hosts advertising the `io.modelcontextprotocol/ui` extension), instead of a wall of JSON. The card shows the event type, severity, state, confidence, SaaS platform, detection time, description, actions already taken, and available remediation. The card is **read-only** — remediation runs through the existing chat tools, never from the card. Non-App hosts are unaffected: the tool's payload is unchanged apart from a new `_card` field.
