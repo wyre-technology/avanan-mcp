@@ -25,7 +25,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { logger } from "./utils/logger.js";
-import { credentialStore } from "./utils/credential-store.js";
+import { runWithRequestCredentials } from "./utils/credential-store.js";
 import { registerResourceHandlers } from "./resources.js";
 import { eventTools, handleEventTool } from "./tools/events.js";
 import { searchTools, handleSearchTool } from "./tools/search.js";
@@ -172,7 +172,7 @@ async function startHttpTransport(): Promise<void> {
       };
 
       if (gatewayCreds) {
-        credentialStore.run(gatewayCreds, handleMcp);
+        runWithRequestCredentials(gatewayCreds, handleMcp);
       } else {
         handleMcp();
       }
