@@ -32,6 +32,13 @@ import { searchTools, handleSearchTool } from "./tools/search.js";
 import { actionTools, handleActionTool } from "./tools/actions.js";
 import { exceptionTools, handleExceptionTool } from "./tools/exceptions.js";
 import type { CallToolResult } from "./utils/types.js";
+import { verifyS2sHeader, S2S_HEADER } from "./s2s-verify.js";
+
+// Conduit service-to-service auth (gateway#377 parity). Non-empty =
+// enforce X-Gateway-S2S on every /mcp request; empty = disabled, behavior
+// exactly as before (dark-by-default until the gateway provisions this
+// container's derived subkey). See src/s2s-verify.ts.
+const S2S_SECRET = process.env.CONDUIT_S2S_SECRET || "";
 
 const ALL_TOOLS = [...eventTools, ...searchTools, ...actionTools, ...exceptionTools];
 
@@ -130,6 +137,16 @@ async function startHttpTransport(): Promise<void> {
     }
 
     if (url.pathname === "/mcp") {
+      if (S2S_SECRET && !verifyS2sHeader(req.headers[S2S_HEADER] as string | undefined, S2S_SECRET)) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            error: "Missing or invalid X-Gateway-S2S header: this endpoint only accepts requests signed by the gateway.",
+          })
+        );
+        return;
+      }
+
       // Extract per-request credentials from headers (gateway mode).
       // Credentials are stored in AsyncLocalStorage so concurrent
       // requests are isolated — no process.env mutation.
