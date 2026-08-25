@@ -7,7 +7,7 @@ A Model Context Protocol (MCP) server for Check Point Avanan (Harmony Email & Co
 
 This is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that connects Claude (or any MCP-compatible AI) to your Check Point Avanan environment.
 
-> **Part of the [MSP Claude Plugins](https://github.com/wyre-technology) ecosystem** — a growing suite of AI integrations for the MSP stack. Built by MSPs, for MSPs.
+> **Part of the [MSP Claude Plugins](https://github.com/WYRE-AI) ecosystem** — a growing suite of AI integrations for the MSP stack. Built by MSPs, for MSPs.
 
 ## Features
 
@@ -16,7 +16,7 @@ This is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 ## Installation
 
 ```bash
-npm install @wyre-technology/avanan-mcp
+npm install @wyre-ai/avanan-mcp
 ```
 
 ## Configuration
@@ -41,7 +41,7 @@ Add to your Claude Desktop `claude_desktop_config.json`:
   "mcpServers": {
     "avanan-mcp": {
       "command": "npx",
-      "args": ["@wyre-technology/avanan-mcp"],
+      "args": ["@wyre-ai/avanan-mcp"],
       "env": {
         "CHECKPOINT_CLIENT_ID": "your-checkpoint-client-id"
         "CHECKPOINT_CLIENT_SECRET": "your-checkpoint-client-secret"
@@ -57,7 +57,7 @@ Add to your Claude Desktop `claude_desktop_config.json`:
 claude mcp add avanan-mcp \
   -e CHECKPOINT_CLIENT_ID=your-value \
   -e CHECKPOINT_CLIENT_SECRET=your-value \
-  -- npx -y @wyre-technology/avanan-mcp
+  -- npx -y @wyre-ai/avanan-mcp
 ```
 
 ### Docker
@@ -89,7 +89,7 @@ Search across email security data
 
 ```bash
 # Clone the repository
-git clone https://github.com/wyre-technology/avanan-mcp.git
+git clone https://github.com/WYRE-AI/avanan-mcp.git
 cd avanan-mcp
 
 # Install dependencies

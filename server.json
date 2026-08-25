@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.wyre-technology/avanan-mcp",
+  "name": "io.github.WYRE-AI/avanan-mcp",
   "title": "Avanan",
   "description": "MCP server for Check Point Harmony Email & Collaboration (Avanan) email security.",
   "repository": {
-    "url": "https://github.com/wyre-technology/avanan-mcp",
+    "url": "https://github.com/WYRE-AI/avanan-mcp",
     "source": "github"
   },
   "version": "0.0.0",
-  "websiteUrl": "https://github.com/wyre-technology/avanan-mcp",
+  "websiteUrl": "https://github.com/WYRE-AI/avanan-mcp",
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/wyre-technology/avanan-mcp:0.0.0",
+      "identifier": "ghcr.io/wyre-ai/avanan-mcp:0.0.0",
       "transport": {
         "type": "stdio"
       },
