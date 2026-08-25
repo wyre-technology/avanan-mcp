@@ -5,9 +5,9 @@
   "version": "0.0.0",
   "description": "MCP server for Checkpoint Harmony Email & Collaboration (Avanan) - email security, anti-phishing, anti-malware, and threat detection",
   "long_description": "Provides AI assistants with structured access to Checkpoint Harmony Email & Collaboration (formerly Avanan). Manage email quarantine, investigate threats and IOCs, view security events and alerts, manage policies (DLP, anti-phishing, anti-malware), manage users, generate reports, investigate incidents, configure Smart Banners, and monitor SaaS application protection through the Model Context Protocol.",
-  "author": { "name": "Wyre Technology", "url": "https://github.com/wyre-technology" },
-  "repository": { "type": "git", "url": "https://github.com/wyre-technology/mcp-server-checkpoint-avanan" },
-  "homepage": "https://github.com/wyre-technology/mcp-server-checkpoint-avanan",
+  "author": { "name": "Wyre Technology", "url": "https://github.com/WYRE-AI" },
+  "repository": { "type": "git", "url": "https://github.com/WYRE-AI/mcp-server-checkpoint-avanan" },
+  "homepage": "https://github.com/WYRE-AI/mcp-server-checkpoint-avanan",
   "license": "Apache-2.0",
   "keywords": ["checkpoint", "avanan", "harmony", "email-security", "anti-phishing", "anti-malware", "mcp", "msp"],
   "server": {
